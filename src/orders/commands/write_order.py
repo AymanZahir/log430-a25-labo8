@@ -92,7 +92,7 @@ def add_order(user_id: int, items: list):
         OrderEventProducer().get_instance().send(config.KAFKA_TOPIC, value=event_data)
         session.close()
 
-def modify_order(order_id: int, is_paid: bool, payment_id: int):
+def modify_order(order_id: int, is_paid: bool = None, payment_id: int = None, payment_link: str = None):
     session = get_sqlalchemy_session()
     try:
         order = session.query(Order).filter(Order.id == order_id).first()
@@ -102,6 +102,9 @@ def modify_order(order_id: int, is_paid: bool, payment_id: int):
 
         if order is not None and payment_id is not None:
             order.payment_link = f"http://api-gateway:8080/payments-api/payments/process/{payment_id}"
+
+        if order is not None and payment_link is not None:
+            order.payment_link = payment_link
 
         session.commit()
         session.refresh(order)

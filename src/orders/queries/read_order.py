@@ -9,6 +9,10 @@ from collections import defaultdict
 from orders.models.order import Order
 from orders.models.order_item import OrderItem
 from sqlalchemy.sql import func
+from logger import Logger
+import time
+
+logger = Logger.get_instance("read_order")
 
 def get_order_by_id(order_id):
     """Get order by ID from Redis"""
@@ -19,6 +23,32 @@ def get_order_by_id(order_id):
         found_key = key.decode('utf-8') if isinstance(key, bytes) else key
         found_value = value.decode('utf-8') if isinstance(value, bytes) else value
         order[found_key] = found_value
+
+    # Si le lien de paiement n'est pas encore présent dans Redis, aller le chercher dans MySQL.
+    attempts = 10
+    for _ in range(attempts):
+        payment_link = order.get("payment_link")
+        if payment_link and payment_link != "no-link":
+            break
+        session = get_sqlalchemy_session()
+        try:
+            db_order = session.query(Order).filter(Order.id == order_id).first()
+            if db_order and db_order.payment_link and db_order.payment_link != "no-link":
+                order["payment_link"] = db_order.payment_link
+                order["user_id"] = str(db_order.user_id)
+                order["total_amount"] = str(db_order.total_amount)
+                r.hset(f"order:{order_id}", mapping={
+                    "user_id": order["user_id"],
+                    "total_amount": order["total_amount"],
+                    "items": order.get("items", ""),
+                    "payment_link": order["payment_link"]
+                })
+                break
+        except Exception as e:
+            logger.debug(f"Echec de récupération depuis MySQL: {e}")
+        finally:
+            session.close()
+        time.sleep(0.5)
     return order
 
 def get_highest_spending_users_mysql():

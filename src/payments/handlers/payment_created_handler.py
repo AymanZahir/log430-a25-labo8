@@ -7,6 +7,8 @@ from typing import Dict, Any
 import config
 from event_management.base_handler import EventHandler
 from orders.commands.order_event_producer import OrderEventProducer
+from orders.commands.write_order import modify_order
+from db import get_redis_conn
 
 class PaymentCreatedHandler(EventHandler):
     """Handles PaymentCreated events"""
@@ -21,18 +23,36 @@ class PaymentCreatedHandler(EventHandler):
     
     def handle(self, event_data: Dict[str, Any]) -> None:
         """Execute every time the event is published"""
-        # TODO: Consultez le diagramme de machine à états pour savoir quelle opération effectuer dans cette méthode. Mettez votre commande à jour avec le nouveau payment_id.
-        # N'oubliez pas d'enregistrer le payment_link dans votre commande
-        event_data["payment_link"] = "todo-add-payment-link-here"
+        payment_id = event_data.get("payment_id")
+        payment_link = event_data.get("payment_link")
+        if not payment_link and payment_id:
+            payment_link = f"http://api-gateway:8080/payments-api/payments/process/{payment_id}"
+            event_data["payment_link"] = payment_link
 
         try:
+            # Mettre à jour la commande avec le lien/ID de paiement et synchroniser Redis.
+            modify_order(
+                event_data["order_id"],
+                is_paid=True,
+                payment_id=payment_id,
+                payment_link=payment_link
+            )
+            redis_client = get_redis_conn()
+            order_key = f"order:{event_data['order_id']}"
+            cached_order = redis_client.hgetall(order_key)
+            cached_order.update({
+                "payment_link": payment_link or "no-link",
+                "is_paid": "True"
+            })
+            redis_client.hset(order_key, mapping=cached_order)
             # Si l'operation a réussi, déclenchez SagaCompleted.
             event_data['event'] = "SagaCompleted"
             self.logger.debug(f"payment_link={event_data['payment_link']}")
             OrderEventProducer().get_instance().send(config.KAFKA_TOPIC, value=event_data)
 
         except Exception as e:
-            # TODO: Si l'operation a échoué, déclenchez l'événement adéquat selon le diagramme.
+            # Si l'operation a échoué, déclenchez l'événement adéquat.
             event_data['error'] = str(e)
-
+            event_data['event'] = "PaymentCreationFailed"
+            OrderEventProducer().get_instance().send(config.KAFKA_TOPIC, value=event_data)
 

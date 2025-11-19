@@ -54,6 +54,7 @@ class OutboxProcessor():
                 order = session.query(Outbox).filter(Outbox.order_id == outbox_item.order_id).first()
                 order.payment_id = data['payment_id']
                 session.commit()
+                event_data["payment_id"] = order.payment_id
                 update_succeeded = modify_order(event_data["order_id"], True, order.payment_id)
                 event_data["payment_link"] = f"http://api-gateway:8080/payments-api/payments/process/{order.payment_id}"
                 if not update_succeeded:
